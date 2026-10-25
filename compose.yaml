@@ -1,0 +1,5 @@
+services:
+  chatpeek:
+    build: .
+    volumes:
+      - ./Exports:/app/Exports

@@ -1,44 +1,32 @@
 name: CI
 
 on:
-  # Only push to the default branch, so a feature branch with an open PR is
-  # checked once via pull_request instead of twice (push + pull_request).
   push:
     branches: [master]
   pull_request:
   schedule:
-    # Weekly liveness check so a stale fixture link surfaces on its own.
-    # A failed scheduled run notifies the repository owner by email.
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
-# Least privilege for the default GITHUB_TOKEN: both jobs only read the repo.
-# Set at the top level so any job added later starts read-only and has to opt
-# into more, rather than silently inheriting the repository default.
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded runs on PR updates only. Master pushes and the weekly
-  # link check each run to completion, so a merge commit never ends up with a
-  # cancelled (never verified) check.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
-    # Offline unit tests: replay saved fixtures, no network.
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          # Nothing pushes back, so keep the token out of .git/config.
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.x"
+          python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements.txt
       - run: python -m pip install --upgrade pip
@@ -47,21 +35,90 @@ jobs:
       - run: python -m unittest ChatPeek_test -v
 
   check-links:
-    # Network liveness check for the share links behind the fixtures.
-    # Runs on the weekly schedule and on manual dispatch.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          # Nothing pushes back, so keep the token out of .git/config.
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.x"
+          python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements.txt
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
       - run: python check_fixture_links.py
+
+  publish:
+    needs: test
+    if: >-
+      github.repository == 'LoicE5/ChatPeek' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: version
+        shell: bash
+        run: |
+          version="$(cat VERSION)"
+          test "$version" = '1.0.0'
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          tags: ghcr.io/loice5/chatpeek:${{ steps.version.outputs.version }}
+
+  release:
+    needs: publish
+    if: >-
+      github.repository == 'LoicE5/ChatPeek' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Create version tag and release from changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.publish.outputs.version }}
+        shell: bash
+        run: |
+          tag="v$RELEASE_VERSION"
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$RELEASE_VERSION" '
+            $0 == "## " version { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          test -n "$(tr -d '[:space:]' < "$notes")"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
