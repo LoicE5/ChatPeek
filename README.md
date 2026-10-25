@@ -11,15 +11,17 @@ Claude `claude.ai/share/...` links work the same way. Their page carries no conv
 - Claude share support: messages, artifacts (as source code), pasted and uploaded text attachments, with thinking and tool calls behind the same opt-in flags
 - Message normalisation that keeps Markdown tables, code blocks, thoughts, tool outputs, and attachment links
 - Markdown writer with optional asset download (`images/` and `attachments/` subfolders when needed)
-- Lightweight CLI: `python ChatPeek.py <share-url>` writes the Markdown to disk
+- Lightweight CLI: `uv run ChatPeek.py <share-url>` writes the Markdown to disk
 
 ## Quick start
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and use Python 3.15:
+
 ```bash
-python -m pip install -r requirements.txt  # requests + beautifulsoup4
-python ChatPeek.py https://chatgpt.com/share/69b1c492-1540-8006-aa29-ee2e0a831385
-# -> ./hybrid-cognitive-systems-69b1c492.md
-python ChatPeek.py https://claude.ai/share/<share-id>
+uv sync --locked
+uv run ChatPeek.py https://chatgpt.com/share/69b1c492-1540-8006-aa29-ee2e0a831385
+# -> ./Exports/hybrid-cognitive-systems-69b1c492.md
+uv run ChatPeek.py https://claude.ai/share/<share-id>
 ```
 
 For Claude shares, uploaded images and files are only reachable while signed in, so the export names them instead of downloading them. Documents whose text Claude extracted (pasted text, PDFs, text files) are included inline. claude.ai's bot protection sometimes challenges requests from cloud servers or VPNs; ChatPeek reports that as an access error, and retrying from a home connection usually works.
@@ -35,7 +37,7 @@ The share fetch makes up to three attempts (two retries) on transient failures -
 By default, ChatPeek now omits internal reasoning traces, tool outputs, and model editable context from the export. If you want to include them, use:
 
 ```bash
-python ChatPeek.py https://chatgpt.com/share/69b1c492-1540-8006-aa29-ee2e0a831385 \
+uv run ChatPeek.py https://chatgpt.com/share/69b1c492-1540-8006-aa29-ee2e0a831385 \
   --include-reasoning \
   --include-tool-output \
   --include-model-context
@@ -57,7 +59,8 @@ print(markdown_path)
 All behaviour is covered by unit tests. They replay saved fixtures under `fixtures/` (ChatGPT share HTML and Claude snapshot JSON, no live traffic), so they keep passing even after a share link expires. Run them with:
 
 ```bash
-python -m unittest ChatPeek_test.py
+uv run --locked python -m unittest ChatPeek_test.py
+uv run --locked mypy .
 ```
 
 ### Keeping the fixture links fresh
@@ -65,7 +68,7 @@ python -m unittest ChatPeek_test.py
 The fixtures were captured from real share links, and those links can go dead over time. A separate check confirms the backing links are still live and still expose the varied content the tests rely on:
 
 ```bash
-python check_fixture_links.py        # exits non-zero and prints guidance if any link is stale
+uv run --locked check_fixture_links.py        # exits non-zero and prints guidance if any link is stale
 ```
 
 A link that is genuinely gone (or whose content changed) is reported as stale and fails the check. A transient problem — a network error, rate limit, or bot challenge, which datacenter CI runners hitting ChatGPT sometimes get — is reported as inconclusive and does *not* fail, so the weekly check does not raise false alarms.
@@ -73,7 +76,7 @@ A link that is genuinely gone (or whose content changed) is reported as stale an
 If a link is stale, the output tells you how to mint a replacement — including a ready-to-paste prompt that makes an AI chat generate a suitably varied conversation — and how to re-capture the fixture:
 
 ```bash
-python check_fixture_links.py --capture https://chatgpt.com/share/<new-id>
+uv run --locked check_fixture_links.py --capture https://chatgpt.com/share/<new-id>
 ```
 
 CI runs the offline tests on every push and pull request, and runs the liveness check on a weekly schedule so a stale link surfaces on its own (a failed scheduled run notifies the repository owner). You can also set `CHATPEEK_CHECK_LINKS=1` to fold the liveness check into the unit-test run locally.
