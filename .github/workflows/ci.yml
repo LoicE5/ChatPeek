@@ -57,6 +57,8 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: read
       packages: write
@@ -87,3 +89,37 @@ jobs:
           provenance: false
           sbom: false
           tags: ghcr.io/loice5/chatpeek:${{ steps.version.outputs.version }}
+
+  release:
+    needs: publish
+    if: >-
+      github.repository == 'LoicE5/ChatPeek' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Create version tag and release from changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.publish.outputs.version }}
+        shell: bash
+        run: |
+          tag="v$RELEASE_VERSION"
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$RELEASE_VERSION" '
+            $0 == "## " version { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          test -n "$(tr -d '[:space:]' < "$notes")"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
