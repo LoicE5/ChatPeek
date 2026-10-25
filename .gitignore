@@ -8,3 +8,5 @@ __pycache__/
 Exports/*
 exports/*
 !Exports/.gitkeep
+
+.DS_Store
