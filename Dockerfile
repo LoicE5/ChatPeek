@@ -1,10 +1,12 @@
-FROM python:3.13-alpine
+FROM python:3.15-alpine
+
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /bin/uv
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project --no-cache --no-managed-python
 
 COPY ChatPeek.py ./
 
-ENTRYPOINT ["python", "ChatPeek.py"]
+ENTRYPOINT ["/app/.venv/bin/python", "ChatPeek.py"]
